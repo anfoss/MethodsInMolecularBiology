@@ -3,6 +3,7 @@
 In this repository the code for analysis of SEC-SWATH data using OpenSwath, PyProphet, TRIC and CCProfiler is provided.
 This script provides an overview of commands for the analysis pipeline of protein complexes from SEC-Evosep-SWATH data. For quantitative data extraction the OpenSWATH Workflow (OSW) (Rost et al. 2014) is applied and subsequent statiscal scoring of co-elution proteins with the R-package CCprofiler. To conduct the trial experiment, download the *.mzXML data, the spectral assay library, and iRT file from ProteomeXchange (data set identifier: XXXX). Installation instruction for applied software tools and detailed instructions about commands and parameters are documented on http://openswath.org/en/latest/ .
 
+
 ## OpenSWATH workflow
 ```{Bash}
 for file in vmatej_*.mzXML.gz
