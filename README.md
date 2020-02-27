@@ -1,2 +1,257 @@
-# MethodsInMolecularBiology
-code for CCprofiler analysis
+# Methods In Molecular Biology
+
+In this repository the code for analysis of SEC-SWATH data using OpenSwath, PyProphet, TRIC and CCProfiler is provided.
+This script provides an overview of commands for the analysis pipeline of protein complexes from SEC-Evosep-SWATH data. For quantitative data extraction the OpenSWATH Workflow (OSW) (Rost et al. 2014) is applied and subsequent statiscal scoring of co-elution proteins with the R-package CCprofiler. To conduct the trial experiment, download the *.mzXML data, the spectral assay library, and iRT file from ProteomeXchange (data set identifier: XXXX). Installation instruction for applied software tools and detailed instructions about commands and parameters are documented on http://openswath.org/en/latest/ .
+
+## OpenSWATH workflow
+```{Bash}
+for file in vmatej_*.mzXML.gz
+do
+echo $file TMPOUT=${TMPDIR}/${file%.*.*} mkdir -p ${TMPOUT}
+OpenSwathWorkflow -in ${file}
+  -tr HS_decoy_EvosepLib.pqp
+  -tr_irt combined_iRT_CiRT_201804.TraML
+  -Scoring:stop_report_after_feature 5
+  -readOptions cache -batchSize 1000  
+  -min_rsq 0.90 -min_coverage 0.6 -sort_swath_maps
+  -batchSize 1000 -extra_rt_extraction_window 60
+  -rt_extraction_window 360 -mz_extraction_window 100
+  -mz_extraction_window_unit ppm
+  -mz_correction_function quadratic_regression_delta_ppm
+  -threads 8
+  -min_upper_edge_dist 1
+  -Scoring:Scores:use_dia_scores true
+  -Scoring:TransitionGroupPicker:min_peak_width 10
+  -tempDirectory ${TMPOUT}
+  -out_osw  ${OUTDIR}/${file%.*.*}.osw
+done
+```
+
+
+## PyProphet
+PyProphet (Rost et al. 2014), is a semi-supervised python based algorithm for scoring OpenSWATH results. For our example we used newest version of PyProphet (version 2.1.4.dev2), which allows the score large-scale dataset (Rosenberger et al. 2017). An extented tutorial is avaialable on the GIT-repository: https://github.com/PyProphet/pyprophet .
+
+To learn the weights for the different scores extracted from OSW, we apply he scoring on ms2 level on the SEC-Input (pre fractionated sample). If several inputs are avaiable, it is advised to generate subsampled merged model.osw file, to learn the scoring weights on a representative sample.
+```{Bash}
+pyprophet score
+  --in= vmatej_I190208_129.osw
+  --level=ms2
+```
+The learned weights are saved in the input file, which is then used to score all the SEC-fractions. This step can be condcuted in parallel.
+
+```{Bash}
+for run in vmatej_*.osw do pyprophet score
+  --in=${run}
+  --apply_weights= vmatej_I190208_129.osw
+  --level=ms2 done
+```
+After ms2 based scoring, all fraction files are merged into a single model to score on peptide and protein. The implementation for large-scale datasets allows to subsample from all *.osw files only the necessary columns for experiment-wide scoring.
+
+```{Bash}
+for run in vmatej_*.osw do run_reduced=${run}r
+pyprophet reduce
+  --in=${run}
+  --out=${run_reduced} done
+```
+To generate a merged file, we have to use as template the spectral library file used to perform quantitation with OpenSWATH. As ouptput we obtain one single model file.
+
+```{Bash}
+pyprophet merge
+  --template=HS_decoy_EvosepLib.pqp
+  --out=model_global_2.osw *.oswr
+```
+On the merged file we can perform peptide and protein level error-rate control either per run or global.
+
+```{Bash}
+pyprophet peptide --context=run-specific --in=model_global_2.osw
+pyprophet protein --context=global --in=model_global_2.osw
+```
+The run-specific peptide and global protein error-rates are then transferred back to each individual file.
+
+```{Bash}
+for run in vmatej_*.osw
+do
+pyprophet backpropagate
+  --in=${run}
+  --apply_scores=model_global_2.osw done
+```
+In the last PyProphet step, we can export for each run the OSW results, applying the confidence score thresholds. For SEC data it is beneficial to export the data with higher FDR thresholds, as the data is further filtered more stringently with functions within the downstream analysis pipeline in CCprofiler.
+
+```{Bash}
+for run in vmatej_*.osw
+do
+pyprophet export
+  --in=${run} --no-transition_quantification
+  --max_rs_peakgroup_qvalue=1
+  --max_global_peptide_qvalue=0.05
+  --max_global_protein_qvalue=0.05
+done
+```
+
+## TRIC
+Alignment of identified peakgroups across the entire SEC-gradient is perfromed via TRIC (Rost et al. 2016).
+```{Bash}
+feature_alignment.py
+-–in vmatej_*.tsv
+--out feature_alignment.csv
+--mst:useRTCorrection True
+--mst:Stdev_multiplier 3.0
+--max_rt_diff 60
+--alignment_score 0.05
+--target_fdr -1
+--max_fdr_quality 0.1
+--fdr_cutoff 0.05
+--realign_method lowess_cython
+--method LocalMST
+--disable_isotopic_grouping
+```
+The resulting feature_alignment.csv is the final OpenSWATH output in long-format and is directely loaded to CCprofiler.
+
+
+# CCprofiler analysis
+CCprofiler (Heusel et al. 2017) faciliates protein complex analysis from size-based fractionated samples with subsequent MS analysis. For more detailed documentation https://github.com/CCprofiler  
+
+R-version used for data analysis
+CCprofiler git commit d2dc51d
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load required R-packages dependencies for the CCprofiler package.
+
+```{r, echo=FALSE}
+require(CCprofiler)
+require(reshape2)
+require(data.table)
+require('R.utils')
+require(reshape2)
+require(tidyr)
+require(dplyr)
+```
+
+```{r echo=FALSE}
+str="'importPCPdata()'"
+# that is to write "R-code in text" and explain it
+```
+
+```{r echo=FALSE}
+str_2="'importFromOpenSWATH()'"
+# that is to write "R-code in text" and explain it
+```
+
+#### Data preprocessing before CCprofiler
+Different versions of OpenSWATH outputs or datasets analyzed with a different spectral assay library need different preprocessing. The CCprofiler sotware needs only a minium set of identifiers and can be conducted also from DDA data if quantiative data on peptide level is provided. The `` `r str` `` presents a flexible function with minium requirements for loading any PCP-data to CCprofiler, as the function only requires a protein_id, peptide_id, filename, and    intensity column. For the presented test data we use the `` `r str_2` `` function and first have to add a prefix to identify decoy sequences.
+
+```{r, results="hide", message= FALSE, echo=FALSE}
+
+df<- fread(input = "feature_alignment.csv",data.table = T,showProgress = T)
+
+
+
+# reformat OSW
+df$filename <- gsub(pattern = "\\.mzXML\\.gz",replacement = "",x = df$filename)
+df$ProteinName <- paste("1/",df$ProteinName,sep = "")
+df$ProteinName  <- gsub(pattern = "1/DECOY_",replacement = "DECOY_1/",df$ProteinName)
+
+# remove SEC-input from the feature_alignment.csv output
+df <- as.data.table(df[df$filename != "vmatej_I190208_129",])
+
+# create fraction annotation
+Annotation_txt<- data.table(filename = unique(df$filename), fraction_number = 1:60)
+
+# load MW calibration curve
+std_elu_fractions <- c(12,19,26,33,39,46)
+std_weights_kDa <- c(1340,670,300,150,44,17)
+cal_Table <- as.data.table(cbind(std_weights_kDa,std_elu_fractions))
+calibration_new = calibrateMW(cal_Table)
+```
+
+#### Protein inference in CCprofiler
+
+Finally the file can be imported using the importFromOpenSWATH function. In this step we add the calibration curve as an annotation to the '' 'pepTrace' '' object.
+```{r, results="hide", message = FALSE}
+pepTraces <- importFromOpenSWATH(data = df,
+                                 annotation_table = Annotation_txt,
+                                 rm_requantified = TRUE,
+                                 MS1Quant = F,
+                                 verbose = T,
+                                 rm_decoys = F)
+
+pepTraces <- annotateMolecularWeight(pepTraces,
+                                     calibration_new)
+
+```
+
+At this step we perform data filtering, sibiling peptide correlation and protein quantitation. First all peptides not identified in minimum of three consecutive fractions are removed. Sibling peptide correlation is a strong filter, as it performs locale correlation for all peptides identified from one protein sequence. Following sibling peptide correlation an absolute correlation cutoff is applied to remove noisy signals.
+
+```{r, message= FALSE}
+pepTraces_cons <- filterConsecutiveIdStretches(traces = pepTraces,
+                                               min_stretch_length = 3)
+
+pepTraces_cons_sib <- filterBySibPepCorr(traces = pepTraces_cons,
+                                         fdr_cutoff = NULL,
+                                         absolute_spcCutoff = 0.2,
+                                         plot = TRUE)
+
+```
+In the next step protein quantitative values are inferred from the 2 most abundant peptides peptides.
+
+```{r, message= FALSE}
+protTraces <- proteinQuantification(pepTraces_cons_sib,
+                                    topN = 2,
+                                    keep_less = FALSE,
+                                    rm_decoys = TRUE)
+
+```
+
+These filtering steps and protein inference results in `r as.vector(summary(protTraces)$metrics[2]) ` unique proteins across the SEC-gradient for which we can now perform protein correlation analysis to obtain protein complexes.
+
+#### complex centric analysis
+
+
+```{r, message= FALSE, warnings = FALSE, results="hide"}
+
+complexHypotheses <- corumComplexHypotheses
+binaryHypotheses <- generateBinaryNetwork(complexHypotheses)
+pathLength <- calculatePathlength(binaryHypotheses)
+
+corumTargetsPlusDecoys <- generateComplexDecoys(target_hypotheses=complexHypotheses,
+                                                dist_info=pathLength,
+                                                min_distance = 2,
+                                                append=TRUE)
+```
+
+Now we perform coelution score calculation and FDR estimation.
+```{r, message= FALSE, results="hide", warning= FALSE }
+complexFeatures <- findComplexFeatures(traces=protTraces,
+                                       complex_hypothesis = corumTargetsPlusDecoys)
+```
+
+After calculating FDR we can filter the data to retain only significant complexes
+```{r, message= FALSE }
+complexFeaturesScored <- calculateCoelutionScore(complexFeatures)
+qvalueComplexFeaturesScored <- calculateQvalue(complexFeaturesScored)
+qvalueComplexFeaturesScoredStats <- qvaluePositivesPlot(qvalueComplexFeaturesScored)
+complexFeaturesFiltered <- subset(qvalueComplexFeaturesScored, qvalue <= 0.05)
+```
+
+
+##### plots and visualization
+The summary function provides an overview of detected protein complexes
+```{r, message= FALSE}
+
+summarizeFeatures(complexFeaturesFiltered)
+```
+
+CCprofiler allows fast plotting of all protein complexes with built in functions
+```{r, message= FALSE}
+# plot 26S proteasome 193 or 112;33
+plotFeatures(feature_table = complexFeaturesFiltered,
+             traces = protTraces,
+             feature_id = "193",
+             annotation_label="Entry_name",
+             calibration = calibration_new,
+             peak_area = TRUE)
+```
