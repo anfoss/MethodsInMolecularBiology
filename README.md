@@ -141,7 +141,7 @@ str_2="'importFromOpenSWATH()'"
 # that is to write "R-code in text" and explain it
 ```
 
-#### Data preprocessing before CCprofiler
+### Data preprocessing before CCprofiler
 Different versions of OpenSWATH outputs or datasets analyzed with a different spectral assay library need different preprocessing. The CCprofiler sotware needs only a minium set of identifiers and can be conducted also from DDA data if quantiative data on peptide level is provided. The `` `r str` `` presents a flexible function with minium requirements for loading any PCP-data to CCprofiler, as the function only requires a protein_id, peptide_id, filename, and    intensity column. For the presented test data we use the `` `r str_2` `` function and first have to add a prefix to identify decoy sequences.
 
 ```{r, results="hide", message= FALSE, echo=FALSE}
@@ -168,7 +168,7 @@ cal_Table <- as.data.table(cbind(std_weights_kDa,std_elu_fractions))
 calibration_new = calibrateMW(cal_Table)
 ```
 
-#### Protein inference in CCprofiler
+### Protein inference in CCprofiler
 
 Finally the file can be imported using the importFromOpenSWATH function. In this step we add the calibration curve as an annotation to the '' 'pepTrace' '' object.
 ```{r, results="hide", message = FALSE}
@@ -208,7 +208,7 @@ protTraces <- proteinQuantification(pepTraces_cons_sib,
 
 These filtering steps and protein inference results in `r as.vector(summary(protTraces)$metrics[2]) ` unique proteins across the SEC-gradient for which we can now perform protein correlation analysis to obtain protein complexes.
 
-#### complex centric analysis
+#### Complex centric analysis
 
 
 ```{r, message= FALSE, warnings = FALSE, results="hide"}
@@ -238,7 +238,7 @@ complexFeaturesFiltered <- subset(qvalueComplexFeaturesScored, qvalue <= 0.05)
 ```
 
 
-##### plots and visualization
+#### Plots and visualization
 The summary function provides an overview of detected protein complexes
 ```{r, message= FALSE}
 
